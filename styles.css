@@ -1,50 +1,106 @@
-body {
-    margin: 0;
-    padding: 0;
-    background: #ffffff;
-    font-family: "Poppins", sans-serif;
-    color: #4c3f68;
-}
+name: Deploy Cute Cat Gallery
 
-/* Header */
-header {
-    text-align: center;
-    padding: 30px;
-    background-color: #e9e2f5;
-    border-bottom: 4px solid #c8b7e3;
-}
+on:
+    push:
+        branches: [ "main" ]
+    workflow_dispatch:
 
-header h1 {
-    margin: 0;
-    font-weight: 600;
-    color: #4c3f68;
-}
+permissions:
+    contents: read
+    pages: write
+    id-token: write
 
-header p {
-    margin-top: 5px;
-}
+jobs:
+    test:
+        runs-on: ubuntu-latest
 
-/* Gallery */
-.gallery {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 20px;
-    padding: 30px;
-}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
 
-.gallery img {
-    width: 100%;
-    border-radius: 15px;
-    border: 4px solid #c8b7e3;
-    box-shadow: 0 4px 10px rgba(90, 70, 120, 0.15);
-}
+            - name: Unit tests - check components
+              run: |
+                set -e
 
-/* Footer */
-footer {
-    text-align: center;
-    padding: 20px;
-    font-size: 14px;
-    color: #6e5c87;
-    background-color: #f6f2fb;
-    border-top: 4px solid #c8b7e3;
-}
+                echo "🔎 Prüfe, ob index.html existiert..."
+                test -f index.html
+
+                echo "🔎 Prüfe, ob styles.css existiert..."
+                test -f styles.css
+            
+            - name: Unit tests - check contents
+              run: |
+                set -e
+
+                echo "🔎 Prüfe, ob 'Cute Cat Gallery' in index.html vorkommt..."
+                if ! grep -qi "Cute Cat Gallery" index.html; then
+                    echo "❌ Titel 'Cute Cat Gallery' nicht gefunden!"
+                    exit 1
+                fi
+
+                echo "✅ Alle einfachen Tests bestanden."
+
+    build:
+        runs-on: ubuntu-latest
+        needs: test
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Upload static files
+              uses: actions/upload-pages-artifact@v3
+              with:
+                path: .
+
+    deploy:
+        environment:
+            name: github-pages
+            url: ${{ steps.deploy.outputs.page_url }}
+
+        runs-on: ubuntu-latest
+        needs: build
+
+        steps:
+            - name: Deploy to GitHub Pages
+              id: deploy
+              uses: actions/deploy-pages@v4
+
+    verify:
+      name: Verify GitHub Pages Deployment
+      runs-on: ubuntu-latest
+      needs: deploy
+
+      steps:
+        - name: Integration tests
+          run: |
+            set -e
+
+            URL="${{ needs.deploy.outputs.page_url }}"
+            echo "🔎 Prüfe URL: $URL"
+
+            # Mehrere Versuche, weil GitHub Pages manchmal ein paar Sekunden braucht
+            for i in {1..10}; do
+              echo "⏳ Versuch $i..."
+
+              STATUS=$(curl -s -o /tmp/page.html -w "%{http_code}" "$URL" || echo "000")
+              echo "HTTP-Status: $STATUS"
+
+              if [ "$STATUS" -eq 200 ]; then
+                echo "✅ Seite ist erreichbar."
+
+                if grep -qi "Cute Cat Gallery" /tmp/page.html; then
+                  echo "✅ Titel 'Cute Cat Gallery' auf der Seite gefunden."
+                  exit 0
+                else
+                  echo "❌ Seite erreichbar, aber Titel nicht gefunden."
+                  exit 1
+                fi
+              fi
+
+              echo "Seite noch nicht bereit, warte 10 Sekunden..."
+              sleep 10
+            done
+
+            echo "❌ Seite nach mehreren Versuchen nicht erreichbar."
+            exit 1
